@@ -1,0 +1,57 @@
+scenario: bottleneck_attack
+task: rmappo_6_0.4
+
+sumo_cfg: "env_utils/bottleneck_map_small/scenario.sumocfg"
+max_num_seconds: 100
+vehicle_action_type: "lane_continuous_speed"
+use_gui: False
+
+# for veh wrapper
+scene_name: "Env_Bottleneck_Attack"
+max_num_CAVs: 16
+max_num_HDVs: 24
+num_CAVs: 6  # num_CAVs/penetration_CAV should be an integer multiple of 10, except for penetration_CAV=1
+num_HDVs: 9
+penetration_CAV: 0.4 # only 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1 are valid
+strategy: "prediction"  # "base" or "attention" or "hierarchical" or "prediction" or "cross_aware"
+use_hist_info: True
+hist_length: 5
+warmup_steps: 0
+edge_ids: [ 'E0', 'E1', 'E2', 'E3', 'E4', ]
+edge_lane_num: { 'E0': 4,
+                 'E1': 4,
+                 'E2': 4,
+                 'E3': 2,
+                 'E4': 4,
+}  # 每一个 edge 对应的车道数
+bottle_necks: [ 'E4' ]  # bottleneck 的 edge id
+bottle_neck_positions: [496, 0]  # bottle neck 的坐标, 用于计算距离
+calc_features_lane_ids: [ 'E0_0', 'E0_1',
+                          'E0_2', 'E0_3',
+                          'E1_0', 'E1_1',
+                          'E1_2', 'E1_3',
+                          'E2_0', 'E2_1',
+                          'E2_2', 'E2_3',
+                          'E3_0', 'E3_1',
+                          'E4_0', 'E4_1',
+                          'E4_2', 'E4_3',
+]  # 计算对应的 lane 的信息
+log_path: './log/check_veh_env'
+delta_t: 1.0
+obs_size: "2(bottleneck_position) + 2(road_end) + 3(self_stats) + 2(nearest_target) + 3*6(surround_stats)"
+shared_obs_size: "2(bottleneck_position) + 2(road_end) + 3 * self.max_num_CAVs(all_CAV_stats) + 18 * 3(all_lane_stats_simple)"
+reward_weights: [(1-0.4)*1.0, (1-0.4)*0.05, (1-0.4)*0.05, 0.4*1.0, 1.0*1.0]
+reward_items: ['individual_speed_r_simple','individual_warn_r', 'individual_coll_r', 'global_ego_speed_r', 'time_penalty_ego']
+time_penalty_ego: "((self.num_CAVs-1) + self.CAV_penetration) * 10 * (1 / (1 + np.exp(5-speed)) - 1) - 1 when inidividual_rew_ego[veh_id] == individual_speed_r_simple else -1"
+
+# generate scene parameters-HDVs' driving style distribution
+aggressive: 0.2
+cautious: 0.2
+normal: 0.6
+
+# 5_0.5: 0.1 + 40
+# sum:10-44, 15-52, 20-58, 25-63, 30-70, 40-82
+save_collision: 0.0
+save_episode_step: 48
+save_prediction: 0.5
+save_prediction_step: 30
