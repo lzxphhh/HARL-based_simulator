@@ -37,6 +37,12 @@ class PredictionBase:
             eps=self.opti_eps,
             weight_decay=self.weight_decay,
         )
+        # self.local_predictor_optimizer = torch.optim.AdamW(
+        #     self.local_predictor.parameters(),
+        #     lr=self.lr,
+        #     eps=self.opti_eps,
+        #     weight_decay=self.weight_decay,
+        # )
 
 
     def lr_decay(self, episode, episodes):
@@ -49,7 +55,7 @@ class PredictionBase:
         update_linear_schedule(self.local_predictor_optimizer, episode, episodes, self.lr)
 
     def get_predictions(
-            self, obs, rnn_states_local, actions, masks
+            self, obs, rnn_states_local, actions, masks, agent_id=None, step=None
     ):
         """Compute prediction errors for the given inputs.
         输入:
@@ -61,17 +67,21 @@ class PredictionBase:
             prediction_errors: (torch.Tensor) prediction_errors for the given inputs. 【thread_num, 1】
             rnn_states: (torch.Tensor) updated RNN states for prediction. 【thread_num, rnn层数，rnn_state_dim】
         """
-        rnn_states_local, local_prediction_error = self.local_predictor(
-            obs, rnn_states_local, actions, masks
+        local_prediction_error = self.local_predictor(
+            obs, actions, masks, agent_id, step
         )
+        rnn_states_local = torch.from_numpy(rnn_states_local)
+        rnn_states_local = rnn_states_local.to(local_prediction_error['1s_all'].device)
         return rnn_states_local, local_prediction_error
 
     def act(
-            self, obs, rnn_states_local, actions, masks
+            self, obs, rnn_states_local, actions, masks, agent_id=None, step=None
     ):
-        rnn_states_local, local_prediction_error = self.local_predictor(
-            obs, rnn_states_local, actions, masks
+        local_prediction_error = self.local_predictor(
+            obs, actions, masks, agent_id, step
         )
+        rnn_states_local = torch.from_numpy(rnn_states_local)
+        rnn_states_local = rnn_states_local.to(local_prediction_error['1s_all'].device)
         return rnn_states_local, local_prediction_error
 
     def update(self, sample):

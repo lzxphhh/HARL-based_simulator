@@ -70,10 +70,17 @@ class OnPolicyLocalPredictionBuffer:
             (self.episode_length, self.n_rollout_threads, act_shape), dtype=np.float32
         )
 
+        self.time_steps = [1, 2, 3, 4, 5]
+        self.categories = ['all', 'CAV', 'HDV']
+        self.local_prediction_errors = {}
         # Buffer for prediction errors of this actor.
-        self.local_prediction_errors = np.zeros(
+        for t in self.time_steps:
+            for category in self.categories:
+                key = f'{t}s_{category}'
+                self.local_prediction_errors[key] = np.zeros(
             (self.episode_length, self.n_rollout_threads, 1), dtype=np.float32
-        )
+            )
+
         # Buffer for rnn states of this predictor.
         self.rnn_states_local = np.zeros(
             (
@@ -109,7 +116,7 @@ class OnPolicyLocalPredictionBuffer:
         obs,
         rnn_states_actor,
         actions,
-        local_prediction_errors,
+        localPre_errs,
         rnn_states_local,
         masks,
         active_masks=None,
@@ -118,7 +125,10 @@ class OnPolicyLocalPredictionBuffer:
         self.obs[self.step + 1] = obs.copy()
         self.rnn_states_actor[self.step + 1] = rnn_states_actor.copy()
         self.actions[self.step] = actions.copy()
-        self.local_prediction_errors[self.step] = local_prediction_errors.copy()
+        for t in self.time_steps:
+            for category in self.categories:
+                key = f'{t}s_{category}'
+                self.local_prediction_errors[key][self.step] = localPre_errs[key].copy()
         self.rnn_states_local[self.step + 1] = rnn_states_local.copy()
         self.masks[self.step + 1] = masks.copy()
         if active_masks is not None:
@@ -174,7 +184,12 @@ class OnPolicyLocalPredictionBuffer:
         else:
             obs = _sa_cast(self.obs[:-1])
         actions = _sa_cast(self.actions)
-        local_prediction_errors = _sa_cast(self.local_prediction_errors)
+        local_prediction_errors = {}
+        for t in self.time_steps:
+            for category in self.categories:
+                key = f'{t}s_{category}'
+                local_prediction_errors[key] = _sa_cast(self.local_prediction_errors[key])
+        # local_prediction_errors = _sa_cast(self.local_prediction_errors)
         masks = _sa_cast(self.masks[:-1])
         active_masks = _sa_cast(self.active_masks[:-1])
         rnn_states_actor = (
@@ -189,7 +204,11 @@ class OnPolicyLocalPredictionBuffer:
             obs_batch = []
             rnn_states_actor_batch = []
             actions_batch = []
-            local_prediction_errors_batch = []
+            local_prediction_errors_batch = {}
+            for t in self.time_steps:
+                for category in self.categories:
+                    key = f'{t}s_{category}'
+                    local_prediction_errors_batch[key] = []
             rnn_states_local_batch = []
             masks_batch = []
             active_masks_batch = []
@@ -199,7 +218,11 @@ class OnPolicyLocalPredictionBuffer:
                 obs_batch.append(obs[ind : ind + data_chunk_length])
                 rnn_states_actor_batch.append(rnn_states_actor[ind])
                 actions_batch.append(actions[ind : ind + data_chunk_length])
-                local_prediction_errors_batch.append(local_prediction_errors[ind : ind + data_chunk_length])
+                for t in self.time_steps:
+                    for category in self.categories:
+                        key = f'{t}s_{category}'
+                        local_prediction_errors_batch[key].append(local_prediction_errors[key][ind : ind + data_chunk_length])
+                # local_prediction_errors_batch.append(local_prediction_errors[ind : ind + data_chunk_length])
                 rnn_states_local_batch.append(rnn_states_local[ind])  # TODO:only the beginning rnn states are needed?
                 masks_batch.append(masks[ind : ind + data_chunk_length])
                 active_masks_batch.append(active_masks[ind : ind + data_chunk_length])
@@ -209,7 +232,11 @@ class OnPolicyLocalPredictionBuffer:
             obs_batch = np.stack(obs_batch, axis=1)
             rnn_states_actor_batch = np.stack(rnn_states_actor_batch).reshape(N, *self.rnn_states_actor.shape[2:])
             actions_batch = np.stack(actions_batch, axis=1)
-            local_prediction_errors_batch = np.stack(local_prediction_errors_batch, axis=1)
+            for t in self.time_steps:
+                for category in self.categories:
+                    key = f'{t}s_{category}'
+                    local_prediction_errors_batch[key] = np.stack(local_prediction_errors_batch[key], axis=1)
+            # local_prediction_errors_batch = np.stack(local_prediction_errors_batch, axis=1)
             masks_batch = np.stack(masks_batch, axis=1)
             active_masks_batch = np.stack(active_masks_batch, axis=1)
             # rnn_states_batch is a (mini_batch_size, *dim) ndarray
@@ -218,7 +245,12 @@ class OnPolicyLocalPredictionBuffer:
             # flatten the (data_chunk_length, mini_batch_size, *dim) ndarrays to (data_chunk_length * mini_batch_size, *dim)
             obs_batch = _flatten(L, N, obs_batch)
             actions_batch = _flatten(L, N, actions_batch)
-            prediction_errors_batch = _flatten(L, N, local_prediction_errors_batch)
+            prediction_errors_batch = {}
+            for t in self.time_steps:
+                for category in self.categories:
+                    key = f'{t}s_{category}'
+                    prediction_errors_batch[key] = _flatten(L, N, local_prediction_errors_batch[key])
+            # prediction_errors_batch = _flatten(L, N, local_prediction_errors_batch)
             masks_batch = _flatten(L, N, masks_batch)
             active_masks_batch = _flatten(L, N, active_masks_batch)
             yield obs_batch, rnn_states_actor_batch, actions_batch, prediction_errors_batch, rnn_states_local_batch, masks_batch, active_masks_batch

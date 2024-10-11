@@ -331,6 +331,9 @@ class OnPolicyBaseRunner:
         if self.predictor_algo_args["train"]["model_dir"] is not None:  # restore prediction model
             self.restore_predictor()
 
+        self.time_steps = [1, 2, 3, 4, 5]
+        self.categories = ['all', 'CAV', 'HDV']
+
     def run(self):
         """Run the training (or rendering) pipeline."""
 
@@ -497,6 +500,7 @@ class OnPolicyBaseRunner:
                 # 把上一个episode产生的最后一个timestep的state放入buffer的新的episode的第一个timestep
                 self.after_update()
             elif self.args["mode"] == "train_predictor":
+                # start = time.time()
                 for step in range(self.predictor_algo_args["train"]["episode_length"]):
                     """
                     采样 - 进入predictor network 
@@ -512,7 +516,7 @@ class OnPolicyBaseRunner:
                         global_prediction_errors,
                         actions,
                         rnn_states_actor,
-                        local_prediction_errors,  # rnn_states是actor的rnn的hidden state
+                        localPre_errs,
                         rnn_states_local,  # rnn_states_critic是critic的rnn的hidden state
                         rnn_states_global,
                     ) = self.collect_predictor(step)
@@ -551,7 +555,7 @@ class OnPolicyBaseRunner:
                         global_prediction_errors,
                         actions,
                         rnn_states_actor,
-                        local_prediction_errors,  # rnn_states是actor的rnn的hidden state
+                        localPre_errs,
                         rnn_states_local,  # rnn_states_critic是critic的rnn的hidden state
                         rnn_states_global,
                     )
@@ -570,6 +574,9 @@ class OnPolicyBaseRunner:
                 self.prep_training()
 
                 local_predictor_train_infos, global_predictor_train_info = self.train_predictor()
+
+                # end = time.time()
+                # print(f'train_predictor time: {end - start} seconds')
                 # log information
                 if episode % self.predictor_algo_args["train"]["log_interval"] == 0:
                     save_model_signal, current_timestep = self.logger.episode_log(
@@ -748,7 +755,7 @@ class OnPolicyBaseRunner:
 
     def collect_predictor(self, step):
         actions_collector = []
-        local_prediction_error_collector = []
+        localPred_errs_collector = {}
         rnn_state_local_collector = []
 
         rnn_states_actor_collector = []
@@ -769,29 +776,42 @@ class OnPolicyBaseRunner:
             )
             actions_collector.append(_t2n(test_actions))
             rnn_states_actor_collector.append(_t2n(test_rnn_state))
-            rnn_state_local_prediction, local_prediction_error = self.local_predictor[agent_id].get_predictions(
+            rnn_state_local_prediction, localPre_errors = self.local_predictor[agent_id].get_predictions(
                 self.local_predictor_buffer[agent_id].obs[step],
                 self.local_predictor_buffer[agent_id].rnn_states_local[step],
                 self.local_predictor_buffer[agent_id].actions[step],
                 self.local_predictor_buffer[agent_id].masks[step],
+                agent_id,
+                step,
             )
             rnn_state_local_collector.append(_t2n(rnn_state_local_prediction))
-            local_prediction_error_collector.append(_t2n(local_prediction_error))
+            for key in localPre_errors.keys():
+                if key not in localPred_errs_collector:
+                    localPred_errs_collector[key] = []
+                localPred_errs_collector[key].append(_t2n(localPre_errors[key]))
+
         actions = np.array(actions_collector).transpose(1, 0, 2)
         rnn_states_actor = np.array(rnn_states_actor_collector).transpose(1, 0, 2, 3)
-        local_prediction_errors = np.array(local_prediction_error_collector).transpose(1, 0, 2)
+
         rnn_states_local = np.array(rnn_state_local_collector).transpose(1, 0, 2, 3)
+
+        localPre_errs = {}
+
+        for t in self.time_steps:
+            for category in self.categories:
+                key = f'{t}s_{category}'
+                localPre_errs[key] = np.array(localPred_errs_collector[key]).transpose(1, 0, 2)
 
         rnn_state_global_prediction, global_prediction_error = self.global_predictor.get_predictions(
             self.global_predictor_buffer.share_obs[step],
             self.global_predictor_buffer.rnn_states_global[step],
-            self.global_predictor_buffer.actions[step],
             self.global_predictor_buffer.masks[step],
+            step,
         )
         global_prediction_errors = _t2n(global_prediction_error)
         rnn_states_global = _t2n(rnn_state_global_prediction)
         values = np.zeros((self.predictor_algo_args["train"]["n_rollout_threads"], 1))
-        return values, global_prediction_errors, actions, rnn_states_actor, local_prediction_errors, rnn_states_local, rnn_states_global
+        return values, global_prediction_errors, actions, rnn_states_actor, localPre_errs, rnn_states_local, rnn_states_global
 
     def insert_MARL(self, data):
         """把这一个time step的数据插入到buffer中"""
@@ -963,7 +983,7 @@ class OnPolicyBaseRunner:
             global_prediction_errors,
             actions,
             rnn_states_actor,
-            local_prediction_errors,  # rnn_states是actor的rnn的hidden state
+            localPre_errs,
             rnn_states_local,  # rnn_states_critic是critic的rnn的hidden state
             rnn_states_global,
         ) = data
@@ -1075,11 +1095,12 @@ class OnPolicyBaseRunner:
 
         # 插入local_predictor_buffer
         for agent_id in range(self.num_agents):
+            localPre_errs_agent_id = {key: value[:, agent_id] for key, value in localPre_errs.items()}
             self.local_predictor_buffer[agent_id].insert(
                 obs[:, agent_id],
                 rnn_states_actor[:, agent_id],
                 actions[:, agent_id],
-                local_prediction_errors[:, agent_id],
+                localPre_errs_agent_id,
                 rnn_states_local[:, agent_id],
                 masks[:, agent_id],
                 active_masks[:, agent_id],
@@ -1288,11 +1309,18 @@ class OnPolicyBaseRunner:
             ),
             dtype=np.float32,
         )
+        step = 0
 
         while True:
             eval_actions_collector = []
-            eval_local_prediction_errors_collector = []
-            eval_global_prediction_errors_collector = []
+            eval_local_prediction_errors_collector = {}
+            eval_local_prediction_errors = {}
+            for t in self.time_steps:
+                for category in self.categories:
+                    key = f'{t}s_{category}'
+                    eval_local_prediction_errors_collector[key] = []
+                    eval_local_prediction_errors[key] = []
+
             for agent_id in range(self.num_agents):
                 eval_actions, temp_rnn_state_actor = self.actor[agent_id].act(
                     eval_obs[:, agent_id],
@@ -1309,25 +1337,27 @@ class OnPolicyBaseRunner:
                 temp_rnn_states_local, eval_local_prediction_errors = self.local_predictor[agent_id].act(
                     eval_obs[:, agent_id],
                     eval_rnn_states_actor[:, agent_id],
-                    eval_actions[:, agent_id],
+                    eval_actions,
                     eval_masks[:, agent_id],
+                    agent_id,
+                    step,
                 )
                 eval_rnn_states_local[:, agent_id] = _t2n(temp_rnn_states_local)
-                eval_local_prediction_errors_collector.append(_t2n(eval_local_prediction_errors))
+                for key in eval_local_prediction_errors.keys():
+                    eval_local_prediction_errors_collector[key].append(_t2n(eval_local_prediction_errors[key]))
+                    eval_local_prediction_errors[key] = np.array(eval_local_prediction_errors_collector[key]).transpose(1, 0, 2)
 
+            step += 1
             eval_actions = np.array(eval_actions_collector).transpose(1, 0, 2)
-            eval_local_prediction_errors = np.array(eval_local_prediction_errors_collector).transpose(1, 0, 2)
 
             temp_rnn_states_global, eval_global_prediction_errors = self.global_predictor.act(
                 eval_share_obs,
                 eval_rnn_states_global,
-                eval_actions,
                 eval_masks,
+                step,
             )
             eval_rnn_states_global = _t2n(temp_rnn_states_global)
-            eval_global_prediction_errors_collector.append(_t2n(eval_global_prediction_errors))
-            eval_global_prediction_errors = np.array(eval_global_prediction_errors_collector).transpose(1, 0, 2)
-
+            eval_global_prediction_errors = _t2n(eval_global_prediction_errors)
             (
                 eval_obs,
                 eval_share_obs,

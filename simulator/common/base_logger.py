@@ -131,13 +131,21 @@ class BaseLogger:
                 self.one_episode_rewards.append([])
                 self.eval_episode_rewards.append([])
         if self.args["mode"] == "train_predictor":
-            self.eval_episode_local_prediction_errors = []
-            self.one_episode_local_prediction_errors = []
+            self.time_steps = [1, 2, 3, 4, 5]
+            self.categories = ['all', 'CAV', 'HDV']
+            self.eval_episode_local_prediction_errors = {}
+            self.one_episode_local_prediction_errors = {}
+            for t in self.time_steps:
+                for category in self.categories:
+                    key = f"{t}s_{category}"
+                    self.eval_episode_local_prediction_errors[key] = []
+                    self.one_episode_local_prediction_errors[key] = []
+                    for eval_i in range(self.algo_args["eval"]["n_eval_rollout_threads"]):
+                        self.one_episode_local_prediction_errors[key].append([])
+                        self.eval_episode_local_prediction_errors[key].append([])
             self.eval_episode_global_prediction_errors = []
             self.one_episode_global_prediction_errors = []
             for eval_i in range(self.algo_args["eval"]["n_eval_rollout_threads"]):
-                self.one_episode_local_prediction_errors.append([])
-                self.eval_episode_local_prediction_errors.append([])
                 self.one_episode_global_prediction_errors.append([])
                 self.eval_episode_global_prediction_errors.append([])
 
@@ -169,7 +177,8 @@ class BaseLogger:
         ) = eval_data
         for eval_i in range(self.algo_args["eval"]["n_eval_rollout_threads"]):
             self.one_episode_rewards[eval_i].append(eval_rewards[eval_i])
-            self.one_episode_local_prediction_errors[eval_i].append(eval_local_prediction_errors[eval_i])
+            for key in eval_local_prediction_errors.keys():
+                self.one_episode_local_prediction_errors[key][eval_i].append(eval_local_prediction_errors[key][eval_i])
             self.one_episode_global_prediction_errors[eval_i].append(eval_global_prediction_errors[eval_i])
         self.eval_infos = eval_infos
 

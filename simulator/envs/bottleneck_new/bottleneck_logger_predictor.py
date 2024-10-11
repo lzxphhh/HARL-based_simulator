@@ -42,9 +42,17 @@ class BottleneckNewLoggerPre(BaseLogger):
         self.episodes = episodes
         self.episode_lens = []
         self.one_episode_len = np.zeros(self.algo_args["train"]["n_rollout_threads"], dtype=int)
-        self.train_episode_local_prediction_errors = np.zeros(self.algo_args["train"]["n_rollout_threads"])
+        self.time_steps = [1, 2, 3, 4, 5]
+        self.categories = ['all', 'CAV', 'HDV']
+        self.train_episode_local_prediction_errors = {}
+        self.done_episodes_local_prediction_errors = {}
+        for t in self.time_steps:
+            for category in self.categories:
+                key = f'{t}s_{category}'
+                self.train_episode_local_prediction_errors[key] = np.zeros(self.algo_args["train"]["n_rollout_threads"])
+                self.done_episodes_local_prediction_errors[key] = np.zeros(self.n_rollout_threads)
+
         self.train_episode_global_prediction_errors = np.zeros(self.algo_args["train"]["n_rollout_threads"])
-        self.done_episodes_local_prediction_error = np.zeros(self.n_rollout_threads)
         self.done_episodes_global_prediction_error = np.zeros(self.n_rollout_threads)
         self.done_episode_lens = np.zeros(self.n_rollout_threads)
         self.done_episode_infos = [{} for _ in range(self.n_rollout_threads)]
@@ -72,39 +80,47 @@ class BottleneckNewLoggerPre(BaseLogger):
             global_prediction_errors,
             actions,
             rnn_states_actor,
-            local_prediction_errors,  # rnn_states是actor的rnn的hidden state
+            localPre_errs,
             rnn_states_local,  # rnn_states_critic是critic的rnn的hidden state
             rnn_states_global,
         ) = data
         # 并行环境中的每个环境是否done （n_env_threads, ）
         dones_env = np.all(dones, axis=1)
 
-        local_prediction_error_env = np.mean(local_prediction_errors, axis=1).flatten()
-        global_prediction_error_env = np.mean(global_prediction_errors, axis=1).flatten()
+        local_prediction_error = {}
+        for t in self.time_steps:
+            for category in self.categories:
+                key = f'{t}s_{category}'
+                local_prediction_error[key] = np.nanmean(localPre_errs[key], axis=1).flatten() if not np.all(np.isnan(localPre_errs[key])) else 0
+                self.train_episode_local_prediction_errors[key] += local_prediction_error[key]
 
-        self.train_episode_local_prediction_errors += local_prediction_error_env
+        global_prediction_error_env = np.mean(global_prediction_errors, axis=1).flatten()
         self.train_episode_global_prediction_errors += global_prediction_error_env
         # 并行环境中的每个环境的episode len （n_env_threads, ）累积
         self.one_episode_len += 1
 
-        for t in range(self.n_rollout_threads):
+        for env in range(self.n_rollout_threads):
             # 如果这个环境的episode结束了
-            if dones_env[t]:
+            if dones_env[env]:
                 # 已经done的episode的总reward
-                self.done_episodes_local_prediction_error[t] = self.train_episode_local_prediction_errors[t]
-                self.train_episode_local_prediction_errors[t] = 0  # 归零这个以及done的episode的local prediction error
-                self.done_episodes_global_prediction_error[t] = self.train_episode_global_prediction_errors[t]
-                self.train_episode_global_prediction_errors[t] = 0  # 归零这个以及done的episode的global prediction error
+                for t in self.time_steps:
+                    for category in self.categories:
+                        key = f'{t}s_{category}'
+                        self.done_episodes_local_prediction_errors[key][env] = self.train_episode_local_prediction_errors[key][env]/(self.one_episode_len[env]-5)
+                        self.train_episode_local_prediction_errors[key][env] = 0
+
+                self.done_episodes_global_prediction_error[env] = self.train_episode_global_prediction_errors[env]/self.one_episode_len[env]
+                self.train_episode_global_prediction_errors[env] = 0  # 归零这个以及done的episode的global prediction error
 
                 # 存一下这个已经done的episode的terminated step的信息
-                self.done_episode_infos[t] = infos[t][0]
+                self.done_episode_infos[env] = infos[env][0]
 
                 # 存一下这个已经done的episode的episode长度
-                self.done_episode_lens[t] = self.one_episode_len[t]
-                self.one_episode_len[t] = 0  # 归零这个以及done的episode的episode长度
+                self.done_episode_lens[env] = self.one_episode_len[env]
+                self.one_episode_len[env] = 0  # 归零这个以及done的episode的episode长度
 
                 # 检查环境保存的episode reward和episode len与算法口的信息是否一致
-                assert self.done_episode_infos[t]['step_time'] == self.done_episode_lens[t]+1, 'episode len not match'
+                assert self.done_episode_infos[env]['step_time'] == self.done_episode_lens[env]+1, 'episode len not match'
 
     def episode_log(
             self,
@@ -142,15 +158,18 @@ class BottleneckNewLoggerPre(BaseLogger):
         )
 
         """Log prediction information for each episode."""
-        average_local_prediction_error = np.mean(self.done_episodes_local_prediction_error)
+        self.log_values = {}
+        for t in self.time_steps:
+            for category in self.categories:
+                key = f'{t}s_{category}'
+                self.log_values[key] = np.mean(self.done_episodes_local_prediction_errors[key])
+                print(
+                    f"Average {t}s-{category} local prediction error is {self.log_values[key]}.\n"
+                )
+
         average_global_prediction_error = global_predictor_buffer.get_mean_prediction_errors()
 
         self.log_train_predictor(local_predictor_train_infos, global_predictor_train_info)
-        print(
-            "Average local prediction error is {}.\n".format(
-                average_local_prediction_error
-            )
-        )
 
         print(
             "Average global prediction error is {}.\n".format(
@@ -163,9 +182,16 @@ class BottleneckNewLoggerPre(BaseLogger):
         )
         with open(self.csv_path, 'a', newline='') as csvfile:
             writer = csv.writer(csvfile)
-            writer.writerow([self.total_num_steps, average_local_prediction_error, average_global_prediction_error])
+            write_data = [self.total_num_steps]
 
-        if average_local_prediction_error <= save_prediction_error and average_global_prediction_error <= save_prediction_error and self.total_num_steps >= save_prediction_step:
+            for t in self.time_steps:
+                for category in self.categories:
+                    key = f'{t}s_{category}'
+                    write_data.append(self.log_values[key])
+            write_data.append(average_global_prediction_error)
+            writer.writerow(write_data)
+
+        if self.log_values['1s_all'] <= save_prediction_error and average_global_prediction_error <= save_prediction_error and self.total_num_steps >= save_prediction_step:
             return True, self.total_num_steps
         else:
             return False, self.total_num_steps

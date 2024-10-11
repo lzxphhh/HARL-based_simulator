@@ -39,9 +39,11 @@ class Iteraction_cross_net(nn.Module):
             'distance_end': torch.zeros(2),                                                # 6
             'actor_action': torch.zeros(1, 3),                                             # 7
             'actual_action': torch.zeros(1, 3),                                            # 8
-            'ego_cav_motion': torch.zeros(1, 15),                                          # 9
-            'ego_hdv_motion': torch.zeros(1, 15),                                          # 10
-            'surround_stats': torch.zeros(6, 16),                                          # 11
+            # 'ego_cav_motion': torch.zeros(1, 15),                                          # 9
+            # 'ego_hdv_motion': torch.zeros(1, 15),                                          # 10
+            'ego_hist_motion': torch.zeros(1, 5 * 7),                                      # 9
+            'surround_stats': torch.zeros(6, 36),                                          # 10
+            'surround_relation_graph_simple': torch.zeros(7, 7),                           # 11
             'expand_surround_stats': torch.zeros(10, 20),                                  # 12
             'surround_relation_graph': torch.zeros(10, 10),                                # 13
             'surround_IDs': torch.zeros(10),                                               # 14
@@ -51,6 +53,9 @@ class Iteraction_cross_net(nn.Module):
             'vehicle_relation_graph': torch.zeros(self.max_num_CAVs + self.max_num_HDVs,
                                                   self.max_num_CAVs + self.max_num_HDVs),  # 18
             'all_lane_stats': torch.zeros(18, 6),                                          # 19
+            'all_lane_evolution': torch.zeros(18, 26*5),                                   # 20
+            'hdv_hist': torch.zeros(self.max_num_HDVs, 5*7),                               # 21
+            'cav_hist': torch.zeros(self.max_num_CAVs, 5*7),                               # 22
         }
 
     def reconstruct_info(self, obs):
@@ -59,12 +64,12 @@ class Iteraction_cross_net(nn.Module):
             reconstructed['target'], reconstructed['self_stats'], \
             reconstructed['distance_bott'], reconstructed['distance_end'], \
             reconstructed['actor_action'], reconstructed['actual_action'], \
-            reconstructed['ego_cav_motion'], reconstructed['ego_hdv_motion'], reconstructed['surround_stats'], \
+            reconstructed['ego_hist_motion'], reconstructed['surround_stats'], reconstructed['surround_relation_graph_simple'], \
             reconstructed['expand_surround_stats'], reconstructed['surround_relation_graph'], \
             reconstructed['surround_IDs'], reconstructed['surround_lane_stats'], \
             reconstructed['hdv_stats'], reconstructed['cav_stats'], reconstructed['vehicle_relation_graph'], \
-            reconstructed['all_lane_stats']
-
+            reconstructed['all_lane_stats'], reconstructed['all_lane_evolution'], \
+            reconstructed['hdv_hist'], reconstructed['cav_hist']
     def forward(self, obs, batch_size=20):
         batch_size = obs.size(0)
         info_current = self.reconstruct_info(obs)

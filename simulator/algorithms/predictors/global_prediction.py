@@ -44,6 +44,18 @@ class GLO_PREDICTION:
             eps=self.opti_eps,
             weight_decay=self.weight_decay,
         )
+        # self.global_predictor_optimizer = torch.optim.AdamW(
+        #     self.global_predictor.parameters(),
+        #     lr=self.prediction_lr,
+        #     eps=self.opti_eps,
+        #     weight_decay=self.weight_decay,
+        # )
+        # self.global_predictor_optimizer = torch.optim.SGD(
+        #     self.global_predictor.parameters(),
+        #     lr=self.prediction_lr,
+        #     eps=self.opti_eps,
+        #     weight_decay=self.weight_decay,
+        # )
 
     def lr_decay(self, episode, episodes):
         """Decay the actor and critic learning rates.
@@ -54,7 +66,7 @@ class GLO_PREDICTION:
         """
         update_linear_schedule(self.global_predictor_optimizer, episode, episodes, self.prediction_lr)
 
-    def get_predictions(self, cent_obs, rnn_states, actions, masks):
+    def get_predictions(self, cent_obs, rnn_states, masks, step):
         """Get value function predictions.
         Args:
             cent_obs: (np.ndarray) centralized input to the critic.
@@ -64,10 +76,12 @@ class GLO_PREDICTION:
             values: (torch.Tensor) value function predictions. (并行环境数量, 1)
             rnn_states_critic: (torch.Tensor) updated critic network RNN states.
         """
-        rnn_states, prediction_errors = self.global_predictor(cent_obs, rnn_states, actions, masks)
+        prediction_errors = self.global_predictor(cent_obs, step)
+        rnn_states = torch.from_numpy(rnn_states)
+        rnn_states = rnn_states.to(prediction_errors.device)
         return rnn_states, prediction_errors
 
-    def act(self, cent_obs, rnn_states, actions, masks):
+    def act(self, cent_obs, rnn_states, masks, step):
         """Get value function predictions.
         Args:
             cent_obs: (np.ndarray) centralized input to the critic.
@@ -77,7 +91,9 @@ class GLO_PREDICTION:
             values: (torch.Tensor) value function predictions. (并行环境数量, 1)
             rnn_states_critic: (torch.Tensor) updated critic network RNN states.
         """
-        rnn_states, prediction_errors = self.global_predictor(cent_obs, rnn_states, actions, masks)
+        prediction_errors = self.global_predictor(cent_obs, step)
+        rnn_states = torch.from_numpy(rnn_states)
+        rnn_states = rnn_states.to(prediction_errors.device)
         return rnn_states, prediction_errors
 
     def cal_prediction_loss(self, prediction_errors):
@@ -103,14 +119,16 @@ class GLO_PREDICTION:
             masks_batch,
         ) = sample
 
-        _, prediction_errors = self.get_predictions(
-            share_obs_batch, rnn_states_global_batch, actions_batch, masks_batch
-        )
-
         # 计算prediction的loss # TODO: 需要设计loss function
-        prediction_loss = self.cal_prediction_loss(
-            prediction_errors
+        tensor_prediction_errors = torch.tensor(
+            global_prediction_errors_batch, device=self.device, requires_grad=True
         )
+        # 获取张量并过滤掉 NaN 和零值元素
+        valid_elements = tensor_prediction_errors[
+            ~torch.isnan(tensor_prediction_errors) & (tensor_prediction_errors != 0)]
+
+        # 计算非 NaN 且非零元素的平均值
+        prediction_loss = valid_elements.mean() if valid_elements.numel() > 0 else torch.tensor(0.0)
 
         self.global_predictor_optimizer.zero_grad()
 
@@ -133,24 +151,24 @@ class GLO_PREDICTION:
 
         train_info["global_prediction_loss"] = 0
 
-        # critic_epoch是critic更新的次数
-        for _ in range(self.prediction_epoch):
-            data_generator = global_predictor_buffer.recurrent_generator_prediction(
-                    self.prediction_num_mini_batch, self.data_chunk_length
-                )
-            # sample出
-            for sample in data_generator:
-                # 计算prediction的loss并且更新
-                prediction_loss = self.update(
-                    sample, value_normalizer=value_normalizer
-                )
+        # prediction_epoch是更新的次数
+        # for _ in range(self.prediction_epoch):
+        data_generator = global_predictor_buffer.recurrent_generator_prediction(
+                self.prediction_num_mini_batch, self.data_chunk_length
+            )
+        # sample出
+        for sample in data_generator:
+            # 计算prediction的loss并且更新
+            prediction_loss = self.update(
+                sample, value_normalizer=value_normalizer
+            )
 
-                train_info["global_prediction_loss"] += prediction_loss.item()
+            train_info["global_prediction_loss"] += prediction_loss.item()
 
-        num_updates = self.prediction_epoch * self.prediction_num_mini_batch
+        # num_updates = self.prediction_epoch * self.prediction_num_mini_batch
 
-        for k, _ in train_info.items():
-            train_info[k] /= num_updates
+        # for k, _ in train_info.items():
+        #     train_info[k] /= num_updates
 
         return train_info
 

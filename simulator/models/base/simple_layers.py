@@ -245,8 +245,13 @@ class MultiVeh_GraphAttentionLayer(nn.Module):
         Wh = torch.matmul(h, self.W)  # h.shape: (batch_size, num_veh, in_features), Wh.shape: (batch_size, num_veh, out_features)
         batch_size, num_veh, _ = Wh.size()
 
-        a_input = torch.cat([Wh.repeat(1, 1, num_veh).view(batch_size, num_veh * num_veh, -1),
-                             Wh.repeat(1, num_veh, 1)], dim=2).view(batch_size, num_veh, num_veh, 2 * self.out_features)
+        a_input = torch.cat(
+            [
+                Wh.repeat(1, 1, num_veh).reshape(batch_size, num_veh * num_veh, -1),
+                Wh.repeat(1, num_veh, 1)
+            ],
+            dim=2
+        ).reshape(batch_size, num_veh, num_veh, 2 * self.out_features)
         e = self.leakyrelu(torch.matmul(a_input, self.a).squeeze(3))
 
         zero_vec = -9e15 * torch.ones_like(e)
@@ -283,18 +288,20 @@ class MultiVeh_GAT(nn.Module):
         return x
 
 class TrajectoryDecoder(nn.Module):
-    def __init__(self, input_dim, hidden_dim, output_dim, num_layers=1):
+    def __init__(self, input_dim, hidden_dim, output_dim, num_layers=4):
         super(TrajectoryDecoder, self).__init__()
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
 
         # LSTM layer
         self.lstm = nn.LSTM(input_dim, hidden_dim, num_layers, batch_first=True)
+        self.leaky_relu = nn.LeakyReLU(negative_slope=0.1)
+        self.relu = nn.ReLU()
 
         # Linear layer to predict future states
         self.fc = nn.Linear(hidden_dim, output_dim)
 
-    def forward(self, encoded_features, future_steps=3):
+    def forward(self, encoded_features, future_steps=5, deviation='leaky_relu'):
         # Initialize hidden state and cell state
         h0 = torch.zeros(self.num_layers, encoded_features.size(0), self.hidden_dim).to(encoded_features.device)
         c0 = torch.zeros(self.num_layers, encoded_features.size(0), self.hidden_dim).to(encoded_features.device)
@@ -304,8 +311,14 @@ class TrajectoryDecoder(nn.Module):
 
         # LSTM forward pass
         lstm_out, _ = self.lstm(lstm_input, (h0, c0))
-
         # Predict future states
         output = self.fc(lstm_out)
+
+        if deviation == 'leaky_relu':
+            output = self.leaky_relu(output)
+        elif deviation == 'relu':
+            output = self.relu(output)
+        elif deviation == 'none':
+            pass
 
         return output

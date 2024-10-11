@@ -120,7 +120,7 @@ class VehEnvWrapper(gym.Wrapper):
         #     header={"t_start": self.t_start},
         # )
         self.rewards_writer = list()
-        hier_obs_size = 10 + 2 + 2 + 2 + 13 + 4 + 6 + 2*15 + 6*16 + 10*20 + 10*10 + 10 + 3*6 + self.max_num_CAVs*7 + self.max_num_HDVs*7
+        hier_obs_size = 10 + 2 + 2 + 2 + 13 + 4 + 6 + 7*5 + 6*36 + 7*7 + 10*20 + 10*10 + 10 + 3*6 + self.max_num_CAVs*7 + self.max_num_HDVs*7
         base_obs_size = 2 + 3 + 2 + 2 + 3 * 6 + 2 + 2
         if self.strategy == 'hierarchical':
             self.self_obs_size = hier_obs_size
@@ -131,13 +131,16 @@ class VehEnvWrapper(gym.Wrapper):
         elif self.strategy == 'DIACC':
             self.self_obs_size = hier_obs_size
         self.vehicles_hist = {}
+        self.lanes_hist = {}
         self.shared_obs_size = hier_obs_size + 18*6 \
-                               + (self.max_num_CAVs+self.max_num_HDVs) * (self.max_num_CAVs+self.max_num_HDVs)  # Improved_model
+                               + (self.max_num_CAVs+self.max_num_HDVs) * (self.max_num_CAVs+self.max_num_HDVs) \
+                               + 18 * 5 * 26 + (self.max_num_CAVs+self.max_num_HDVs) * 7 * 5 # traffic flow evolution
         # self.shared_obs_size = 2 + 2 + 3 * self.max_num_CAVs + 18 * 3  ####baseline
         if self.use_hist_info:
             self.obs_size = self.self_obs_size
             for i in range(self.hist_length):
                 self.vehicles_hist[f'hist_{i+1}'] = {veh_id: np.zeros(7) for veh_id in self.veh_ids}
+                self.lanes_hist[f'hist_{i+1}'] = {lane_id: np.zeros(26) for lane_id in self.calc_features_lane_ids}
         else:
             self.obs_size = self.self_obs_size
         self.surround_vehicle = {ego_id: {} for ego_id in self.ego_ids}
@@ -1264,4 +1267,3 @@ class VehEnvWrapper(gym.Wrapper):
     def close(self) -> None:
         return super().close()
 
-    # TODO: MARL最好知道上一刻的动作

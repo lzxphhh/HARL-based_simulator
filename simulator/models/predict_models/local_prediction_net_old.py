@@ -47,16 +47,10 @@ class LocalPrediction(nn.Module):
         self.max_num_CAVs = args['max_num_CAVs']
         self.CAV_ids = [f'CAV_{i}' for i in range(self.num_CAVs)]
         self.HDV_ids = [f'HDV_{i}' for i in range(self.num_HDVs)]
-        self.max_CAV_ids = [f'CAV_{i}' for i in range(self.max_num_CAVs)]
-        self.max_HDV_ids = [f'HDV_{i}' for i in range(self.max_num_HDVs)]
         self.veh_ids = self.CAV_ids + self.HDV_ids
         self.prediction_output = {}
         for i in range(3):
             self.prediction_output[f'hist_{i + 1}'] = {veh_id: {pre_id: [] for pre_id in self.veh_ids} for veh_id in self.CAV_ids}
-        self.prediction_log = {}
-        self.groundtruth_log = {}
-        self.prediction_error_log = {}
-        self.timestamp = 0
         # 如果使用RNN，初始化RNN层
         if self.use_recurrent_policy:
             self.rnn = RNNLayer(
@@ -137,14 +131,6 @@ class LocalPrediction(nn.Module):
         env_num = obs.size(0)
         prediction_features = self.base(obs)
         reconstruct_info = self.reconstruct_data(obs)
-        self.prediction_log[self.timestamp] = {veh_id: {pre_id: [] for pre_id in self.veh_ids} for veh_id in self.CAV_ids}
-        self.groundtruth_log[self.timestamp] = {veh_id: [] for veh_id in self.max_CAV_ids+self.max_HDV_ids}
-        self.prediction_error_log[self.timestamp] = {veh_id: {pre_id: [] for pre_id in self.veh_ids} for veh_id in self.CAV_ids}
-
-        for i in range(self.max_num_HDVs):
-            self.groundtruth_log[self.timestamp][f'HDV_{i}'] = reconstruct_info[15][:, i, :4]
-        for i in range(self.max_num_CAVs):
-            self.groundtruth_log[self.timestamp][f'CAV_{i}'] = reconstruct_info[16][:, i, :4]
 
         # 如果使用RNN，将特征和RNN状态输入RNN层，得到新的特征和RNN状态
         if self.use_recurrent_policy:

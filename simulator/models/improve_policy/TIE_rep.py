@@ -22,7 +22,7 @@ class TIE_rep(nn.Module):
         self.action_dim = action_dim
         self.n_embd = n_embd
         self.action_type = action_type
-        self.para_env = ['n_rollout_threads']
+        self.para_env = args['n_rollout_threads']
 
         self.gat_CAV_1a = GAT(nfeat=6, nhid=16, nclass=64, dropout=0.1, alpha=0.2, nheads=1)
         self.gat_HDV_5s = GAT(nfeat=3*5, nhid=32, nclass=64, dropout=0.1, alpha=0.2, nheads=1)
@@ -40,9 +40,11 @@ class TIE_rep(nn.Module):
             'distance_end': torch.zeros(2),                  # 6
             'actor_action': torch.zeros(1, 3),               # 7
             'actual_action': torch.zeros(1, 3),              # 8
-            'ego_cav_motion': torch.zeros(1, 15),            # 9
-            'ego_hdv_motion': torch.zeros(1, 15),            # 10
-            'surround_stats': torch.zeros(6, 16),            # 11
+            # 'ego_cav_motion': torch.zeros(1, 15),            # 9
+            # 'ego_hdv_motion': torch.zeros(1, 15),            # 10
+            'ego_hist_motion': torch.zeros(1, 5 * 7),        # 9
+            'surround_stats': torch.zeros(6, 36),            # 10
+            'surround_relation_graph_simple': torch.zeros(7, 7),    # 11
             'expand_surround_stats': torch.zeros(10, 20),    # 12
             'surround_relation_graph': torch.zeros(10, 10),  # 13
             'surround_IDs': torch.zeros(10),                 # 14
@@ -53,14 +55,14 @@ class TIE_rep(nn.Module):
 
     def reconstruct_info(self, obs):
         reconstructed = self.reconstruct_obs_batch(obs, self.example_extend_info)
-        return reconstructed['road_structure'], reconstructed['bottle_neck_position'],  reconstructed['road_end'], \
-            reconstructed['target'], reconstructed['self_stats'], \
-            reconstructed['distance_bott'], reconstructed['distance_end'], \
-            reconstructed['actor_action'], reconstructed['actual_action'], \
-            reconstructed['ego_cav_motion'], reconstructed['ego_hdv_motion'], reconstructed['surround_stats'], \
-            reconstructed['expand_surround_stats'], reconstructed['surround_relation_graph'], \
-            reconstructed['surround_IDs'], reconstructed['surround_lane_stats'], \
-            reconstructed['hdv_stats'], reconstructed['cav_stats']
+        return (reconstructed['road_structure'], reconstructed['bottle_neck_position'],  reconstructed['road_end'], \
+                reconstructed['target'], reconstructed['self_stats'], \
+                reconstructed['distance_bott'], reconstructed['distance_end'], \
+                reconstructed['actor_action'], reconstructed['actual_action'], \
+                reconstructed['ego_hist_motion'], reconstructed['surround_stats'], reconstructed['surround_relation_graph_simple'], \
+                reconstructed['expand_surround_stats'], reconstructed['surround_relation_graph'], \
+                reconstructed['surround_IDs'], reconstructed['surround_lane_stats'], \
+                reconstructed['hdv_stats'], reconstructed['cav_stats'])
 
     def forward(self, obs, batch_size=20):
         # obs: (n_rollout_thread, obs_dim)
@@ -72,7 +74,7 @@ class TIE_rep(nn.Module):
         self.adj_surround_cav[:, 1:, 1:] = 0
         self.adj_surround_hdv[:, 1:, 1:] = 0
         # 获取 type_mask 信息
-        type_masks = info_current[11][:, :, 0]  # shape: [batch_size, 6]
+        type_masks = info_current[10][:, :, 0]  # shape: [batch_size, 6]
         # 创建掩码矩阵
         cav_mask = (type_masks == 0).float()  # 将布尔类型转换为 Float 类型
         hdv_mask = (type_masks == 1).float()
@@ -94,10 +96,10 @@ class TIE_rep(nn.Module):
         # 06-'distance_end': torch.zeros(2),
         # 03-'target': torch.zeros(2),
         local_road_info = torch.cat((info_current[5], info_current[2][:, :1], info_current[6], info_current[3]), dim=1)
-        local_surround_cav_motion = info_current[11][:, :, 1:7]
-        local_ego_motion = info_current[9][:, :, :6]
-        hdv_hist = info_current[11][:, :, 1:]
-        ego_hist = info_current[10]
+        local_surround_cav_motion = torch.cat((info_current[10][:, :, 29:32], info_current[10][:, :, 33:]), dim=2)
+        local_ego_motion = torch.cat((info_current[9][:, :, 28:31], info_current[9][:, :, 32:]), dim=2)
+        hdv_hist = torch.cat((info_current[10][:, :, 1:4], info_current[10][:, :, 8:11], info_current[10][:, :, 15:18], info_current[10][:, :, 22:25], info_current[10][:, :, 29:32]), dim=2)
+        ego_hist = torch.cat((info_current[9][:, :, :3], info_current[9][:, :, 7:10], info_current[9][:, :, 14:17], info_current[9][:, :, 21:24], info_current[9][:, :, 28:31]), dim=2)
         local_surround_lane_stats = info_current[15]
 
         combined_ego2hdv_hist = torch.cat((ego_hist, hdv_hist), dim=1)
