@@ -23,8 +23,8 @@ class GATAware(nn.Module):
         hist_hidden_size = 64
         self.hdv_linear = nn.Linear(4, 32)
         self.hdv_gru_layer = nn.GRU(input_size=32, hidden_size=64, batch_first=True)
-        # self.cav_linear = nn.Linear(7, 32)
-        # self.cav_transformer = TransformerModule(32, 2, 1, 32)
+        self.cav_linear = nn.Linear(7, 32)
+        self.cav_transformer = TransformerModule(32, 2, 1, 32)
         self.cav_state_linear = nn.Linear(4, 32)
         self.cav_action_linear = nn.Linear(1, 32)
         self.cav_cross_attn = CrossAttention(32, 8, 32, 0.1)
@@ -32,7 +32,7 @@ class GATAware(nn.Module):
         self.leaky_relu = nn.LeakyReLU(negative_slope=0.1)
         self.gat_all_vehs = MultiVeh_GAT(nfeat=64, nhid=128, nclass=64, dropout=0.2, alpha=0.2, nheads=1)
         self.mlp_enc_combined = MLPBase(args, [8 + 32 + 64 + 64 + 64])
-        self.Pre_decoder = TrajectoryDecoder(input_dim=64, hidden_dim=256, output_dim=2)
+        self.Pre_decoder = TrajectoryDecoder(input_dim=8 + 32 + 64 + 64 + 64, hidden_dim=256, output_dim=2)
         self.CAV_ids = [f'CAV_{i}' for i in range(self.num_CAVs)]
         self.HDV_ids = [f'HDV_{i}' for i in range(self.num_HDVs)]
         self.veh_ids = self.CAV_ids + self.HDV_ids
@@ -70,14 +70,14 @@ class GATAware(nn.Module):
 
             # Process ego vehicle dynamic features
             state_tensor = ego_veh_hist[:, 0, :].reshape(num_env, 5, 7)
-            # state_tensor = self.cav_linear(state_tensor)
-            # transformer_out = self.cav_transformer(state_tensor)
-            state_tensor_state = state_tensor[:, :, :4]
-            state_tensor_action = state_tensor[:, :, 4:5]
-            state_tensor_state = self.leaky_relu(self.cav_state_linear(state_tensor_state))
-            state_tensor_action = self.leaky_relu(self.cav_action_linear(state_tensor_action))
-            cross_attn_out = self.cav_cross_attn(state_tensor_state, state_tensor_action)
-            _, gru_hidden_1 = self.cav_gru_layer(cross_attn_out) # transformer_out
+            state_tensor = self.cav_linear(state_tensor)
+            transformer_out = self.cav_transformer(state_tensor)
+            # state_tensor_state = state_tensor[:, :, :4]
+            # state_tensor_action = state_tensor[:, :, 4:5]
+            # state_tensor_state = self.leaky_relu(self.cav_state_linear(state_tensor_state))
+            # state_tensor_action = self.leaky_relu(self.cav_action_linear(state_tensor_action))
+            # cross_attn_out = self.cav_cross_attn(state_tensor_state, state_tensor_action)
+            _, gru_hidden_1 = self.cav_gru_layer(transformer_out) # transformer_out cross_attn_out
             ego_features = self.leaky_relu(gru_hidden_1.squeeze(0)).unsqueeze(1)  # [num_env, 1, 64]
 
             # Surrounding vehicles - batch processing for types
@@ -117,8 +117,8 @@ class GATAware(nn.Module):
 
             # Combine embeddings and predict future states
             enc_combined_embedding = torch.cat((other_info_expanded, veh_dynamics, enc_veh_relation), dim=2)
-            enc_combined_embedding = self.mlp_enc_combined(enc_combined_embedding)
-            future_states = self.Pre_decoder(enc_combined_embedding.reshape(batch_size * 7, 64), future_steps=5, deviation='none')
+            # enc_combined_embedding = self.mlp_enc_combined(enc_combined_embedding)
+            future_states = self.Pre_decoder(enc_combined_embedding.reshape(batch_size * 7, 8 + 32 + 64 + 64 + 64), future_steps=5, deviation='none')
             future_states = future_states.reshape(batch_size, 7, 5, 2)
 
             # Compute absolute future states for surrounding vehicles (vehicles 1 to 6)
